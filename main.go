@@ -28,26 +28,10 @@ type config struct {
 	Agency      string `envconfig:"COURT" required:"true"`
 }
 
-func newClient(c config) (*storage.Client, error) {
-	if c.MongoMICol == "" || c.MongoAgCol == "" {
-		return nil, fmt.Errorf("error creating storage client: db collections must not be empty. MI:\"%s\", AG:\"%s\"", c.MongoMICol, c.MongoAgCol)
-	}
-	db, err := storage.NewDBClient(c.MongoURI, c.MongoDBName, c.MongoMICol, c.MongoAgCol, c.MongoPkgCol)
-	if err != nil {
-		return nil, fmt.Errorf("error creating DB client: %q", err)
-	}
-	db.Collection(c.MongoMICol)
-	client, err := storage.NewClient(db, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error creating storage.client: %q", err)
-	}
-	return client, nil
-}
-
 func main() {
 	var conf config
 	godotenv.Load()
-	if err := envconfig.Process("remuneracao-magistrados", &conf); err != nil {
+	if err := envconfig.Process("dadosjusbr-recoletor", &conf); err != nil {
 		log.Fatal(err)
 	}
 	client, err := newClient(conf)
@@ -86,6 +70,22 @@ func main() {
 		log.Fatalf("error while collecting data: %q", err)
 	}
 	fmt.Println(strings.Join(downloads, "\n"))
+}
+
+func newClient(c config) (*storage.Client, error) {
+	if c.MongoMICol == "" || c.MongoAgCol == "" {
+		return nil, fmt.Errorf("error creating storage client: db collections must not be empty. MI:\"%s\", AG:\"%s\"", c.MongoMICol, c.MongoAgCol)
+	}
+	db, err := storage.NewDBClient(c.MongoURI, c.MongoDBName, c.MongoMICol, c.MongoAgCol, c.MongoPkgCol)
+	if err != nil {
+		return nil, fmt.Errorf("error creating DB client: %q", err)
+	}
+	db.Collection(c.MongoMICol)
+	client, err := storage.NewClient(db, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating storage.client: %q", err)
+	}
+	return client, nil
 }
 
 func savePackage(backups []storage.Backup, outDir string) ([]string, error) {
