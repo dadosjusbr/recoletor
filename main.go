@@ -50,7 +50,7 @@ func newClient(c config) (*storage.Client, error) {
 
 func main() {
 	godotenv.Load()
-	if err := envconfig.Process("remuneracao-magistrados", &conf); err != nil {
+	if err := envconfig.Process("dadosjusbr-recoletor", &conf); err != nil {
 		log.Fatal(err)
 	}
 	c, err := newClient(conf)
