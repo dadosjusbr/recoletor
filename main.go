@@ -38,10 +38,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if _, err := strconv.Atoi(conf.Month); err != nil {
+	month, err := strconv.Atoi(conf.Month)
+	if err != nil {
 		log.Fatalf("Invalid month (\"%s\"): %q", conf.Month, err)
 	}
-	month, _ := strconv.Atoi(conf.Month)
 
 	if _, err := strconv.Atoi(conf.Year); err != nil {
 		log.Fatalf("Invalid year (\"%s\"): %q", conf.Year, err)
