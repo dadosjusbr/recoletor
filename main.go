@@ -43,10 +43,10 @@ func main() {
 		log.Fatalf("Invalid month (\"%s\"): %q", conf.Month, err)
 	}
 
-	if _, err := strconv.Atoi(conf.Year); err != nil {
+        year, err := strconv.Atoi(conf.Year)
+	if err != nil {
 		log.Fatalf("Invalid year (\"%s\"): %q", conf.Year, err)
 	}
-	year, _ := strconv.Atoi(conf.Year)
 
 	outputFolder := conf.OutDir
 	if outputFolder == "" {
