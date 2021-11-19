@@ -1,0 +1,110 @@
+name: Push
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+on:
+  #schedule:
+  #  - cron: '22 13 * * *'
+  push:
+    branches: [ main ]
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+  #pull_request:
+  #  branches: [ main ]
+
+env:
+  # Use docker.io for Docker Hub if empty
+  REGISTRY: ghcr.io
+  # github.repository as <account>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
+
+
+jobs:
+  analyze:
+      runs-on: ubuntu-latest
+      permissions:
+        actions: read
+        contents: read
+        security-events: write
+
+      strategy:
+        fail-fast: false
+        matrix:
+          language: [ 'go' ]
+          # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python', 'ruby' ]
+          # Learn more about CodeQL language support at https://git.io/codeql-language-support
+
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v2
+
+        # Initializes the CodeQL tools for scanning.
+        - name: Initialize CodeQL
+          uses: github/codeql-action/init@v1
+          with:
+            languages: ${{ matrix.language }}
+            # If you wish to specify custom queries, you can do so here or in a config file.
+            # By default, queries listed here will override any specified in a config file.
+            # Prefix the list here with "+" to use these queries and those in the config file.
+            # queries: ./path/to/local/query, your-org/your-repo/queries@main
+
+        # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
+        # If this step fails, then you should remove it and run the build manually (see below)
+        - name: Autobuild
+          uses: github/codeql-action/autobuild@v1
+
+        - name: Perform CodeQL Analysis
+          uses: github/codeql-action/analyze@v1
+
+  build:
+    needs: analyze
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@master
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '1.16.x' # The Go version to download (if necessary) and use.
+      - run: go build
+
+  build-push-image:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      # Login against a Docker registry except on PR
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
