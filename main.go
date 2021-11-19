@@ -67,14 +67,17 @@ func main() {
 		log.Fatalf("Error creating output folder(%s): %q", conf.OutDir, err)
 	}
 
-	type bkpItem struct {
+	// we are only interested in one field.
+	var item struct {
 		Backups []storage.Backup `json:"backups,omitempty" bson:"backups,omitempty"`
 	}
-
-	var item bkpItem
 	err = dbColl.FindOne(
 		context.TODO(),
-		bson.D{{Key: "aid", Value: conf.AID}}).Decode(&item)
+		bson.D{
+			{Key: "aid", Value: conf.AID},
+			{Key: "year", Value: conf.Year},
+			{Key: "month", Value: conf.Month},
+		}).Decode(&item)
 	if err != nil {
 		log.Fatalf("Error searching for agency id \"%s\":%q", conf.AID, err)
 	}
