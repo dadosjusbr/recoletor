@@ -114,10 +114,11 @@ func disconnect(c *mongo.Client) error {
 func savePackage(backups []storage.Backup, outDir string) ([]string, error) {
 	var files []string
 	for _, file := range backups {
-		if err := download(fmt.Sprintf("%s/%s", outDir, path.Base(file.URL)), file.URL); err != nil {
+		fpath := filepath.Join(outDir, path.Base(file.URL))
+		if err := download(fpath, file.URL); err != nil {
 			return nil, fmt.Errorf("error while dowloading file %s: %q", file, err)
 		}
-		files = append(files, file.URL)
+		files = append(files, fpath)
 	}
 	return files, nil
 }
