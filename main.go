@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -10,82 +11,101 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dadosjusbr/storage"
-	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+const (
+	mgoConnTimeout = 60 * time.Second
+)
+
+// O tipo decInt é necessário pois a biblioteca converte usando ParseInt passando
+// zero na base. Ou seja, meses como 08 passam a ser inválidos pois são tratados
+// como números octais.
+type decInt int
+
+func (i *decInt) Decode(value string) error {
+	v, err := strconv.Atoi(value)
+	*i = decInt(v)
+	return err
+}
+
 type config struct {
-	MongoURI    string `envconfig:"MONGODB_URI" required:"true"`
-	MongoDBName string `envconfig:"MONGODB_NAME" required:"true"`
-	MongoMICol  string `envconfig:"MONGODB_MICOL" required:"true"`
-	MongoAgCol  string `envconfig:"MONGODB_AGCOL" required:"true"`
-	MongoPkgCol string `envconfig:"MONGODB_PKGCOL" required:"true"`
-	Month       string `envconfig:"MONTH" required:"true"`
-	Year        string `envconfig:"YEAR" required:"true"`
-	OutDir      string `envconfig:"OUTPUT_FOLDER"`
-	Agency      string `envconfig:"COURT" required:"true"`
+	Month decInt `envconfig:"MONTH"`
+	Year  decInt `envconfig:"YEAR"`
+	AID   string `envconfig:"AID"`
+
+	// Backup URL store
+	MongoURI        string `envconfig:"MONGODB_URI"  required:"true"`
+	MongoDBName     string `envconfig:"MONGODB_DBNAME"  required:"true"`
+	MongoBackupColl string `envconfig:"MONGODB_BCOLL"  required:"true"`
+	OutDir          string `envconfig:"OUTPUT_FOLDER"  required:"true"`
 }
 
 func main() {
+	// parsing environment variables.
 	var conf config
-	godotenv.Load()
-	if err := envconfig.Process("dadosjusbr-recoletor", &conf); err != nil {
-		log.Fatal(err)
+	if err := envconfig.Process("", &conf); err != nil {
+		log.Fatalf("Error loading config values from .env: %v", err)
 	}
-	client, err := newClient(conf)
+	conf.AID = strings.ToLower(conf.AID)
+
+	// configuring mongodb and cloud backup clients.
+	db, err := connect(conf.MongoURI)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error connecting to mongo: %v", err)
 	}
-	month, err := strconv.Atoi(conf.Month)
-	if err != nil {
-		log.Fatalf("Invalid month (\"%s\"): %q", conf.Month, err)
+	defer disconnect(db)
+	dbColl := db.Database(conf.MongoDBName).Collection(conf.MongoBackupColl)
+
+	if err := os.MkdirAll(conf.OutDir, os.ModePerm); err != nil && !os.IsExist(err) {
+		log.Fatalf("Error creating output folder(%s): %q", conf.OutDir, err)
 	}
 
-        year, err := strconv.Atoi(conf.Year)
-	if err != nil {
-		log.Fatalf("Invalid year (\"%s\"): %q", conf.Year, err)
+	type bkpItem struct {
+		Backups []storage.Backup `json:"backups,omitempty" bson:"backups,omitempty"`
 	}
 
-	outputFolder := conf.OutDir
-	if outputFolder == "" {
-		outputFolder = "./output"
+	var item bkpItem
+	err = dbColl.FindOne(
+		context.TODO(),
+		bson.D{{Key: "aid", Value: conf.AID}}).Decode(&item)
+	if err != nil {
+		log.Fatalf("Error searching for agency id \"%s\":%q", conf.AID, err)
 	}
 
-	if err := os.Mkdir(outputFolder, os.ModePerm); err != nil && !os.IsExist(err) {
-		log.Fatalf("Error creating output folder(%s): %q", outputFolder, err)
-	}
-
-	court := strings.ToLower(os.Getenv("COURT"))
-	if court == "" {
-		log.Fatalf("Environment variable COURT is mandatory")
-	}
-	oma, _, err := client.GetOMA(month, year, court)
+	downloads, err := savePackage(item.Backups, conf.OutDir)
 	if err != nil {
-		log.Fatalf("error fetching data: %q", err)
-	}
-	downloads, err := savePackage(oma.Backups, outputFolder)
-	if err != nil {
-		log.Fatalf("error while collecting data: %q", err)
+		log.Fatalf("Error saving backups (%v): %q", item.Backups, err)
 	}
 	fmt.Println(strings.Join(downloads, "\n"))
 }
 
-func newClient(c config) (*storage.Client, error) {
-	if c.MongoMICol == "" || c.MongoAgCol == "" {
-		return nil, fmt.Errorf("error creating storage client: db collections must not be empty. MI:\"%s\", AG:\"%s\"", c.MongoMICol, c.MongoAgCol)
-	}
-	db, err := storage.NewDBClient(c.MongoURI, c.MongoDBName, c.MongoMICol, c.MongoAgCol, c.MongoPkgCol)
+func connect(url string) (*mongo.Client, error) {
+	c, err := mongo.NewClient(options.Client().ApplyURI(url))
 	if err != nil {
-		return nil, fmt.Errorf("error creating DB client: %q", err)
+		return nil, fmt.Errorf("error creating mongo client(%s):%w", url, err)
 	}
-	db.Collection(c.MongoMICol)
-	client, err := storage.NewClient(db, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error creating storage.client: %q", err)
+	ctx, cancel := context.WithTimeout(context.Background(), mgoConnTimeout)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("error connecting to mongo(%s):%w", url, err)
 	}
-	return client, nil
+	return c, nil
+}
+
+func disconnect(c *mongo.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := c.Disconnect(ctx); err != nil {
+		return fmt.Errorf("error disconnecting from mongo:%w", err)
+	}
+	return nil
 }
 
 func savePackage(backups []storage.Backup, outDir string) ([]string, error) {
